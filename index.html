@@ -39,6 +39,7 @@
   .btn.ghost { border-color: transparent; background: transparent; color: var(--muted); }
   .btn.ghost:hover { color: var(--text); background: var(--surface-2); }
   .btn:disabled { opacity: .6; cursor: default; }
+  .btn.busy:disabled { opacity: .85; cursor: progress; } /* working: a spinner and "Signing in…" */
   .field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
   .input, select.input, textarea.input { width: 100%; padding: 9px 11px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); font-weight: 400; color: var(--text); }
   .input:focus, .btn:focus-visible, .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -529,7 +530,7 @@
       <label class="field">Email<input class="input" type="email" name="email" autocomplete="username" required></label>
       <label class="field">Password<input class="input" type="password" name="password" autocomplete="current-password" required></label>
       <p class="error" data-error></p>
-      <button class="btn primary" type="submit">Sign in</button>
+      <button class="btn primary" type="submit" data-busy="Signing in…">Sign in</button>
       <button class="linkish" type="button" data-goto="resetRequestForm">First time, or forgot your password?</button>
       <p class="auth-alt">New here? <button class="linkish" type="button" data-goto="accessForm">Request access</button></p>
     </form>
@@ -538,7 +539,7 @@
       <div><h1>Set your password</h1><p class="sub">We'll email you a 6-digit code. Your email must already be on the board's user list.</p></div>
       <label class="field">Email<input class="input" type="email" name="email" autocomplete="username" required></label>
       <p class="error" data-error></p>
-      <button class="btn primary" type="submit">Email me a code</button>
+      <button class="btn primary" type="submit" data-busy="Sending code…">Email me a code</button>
       <button class="linkish" type="button" data-goto="loginForm">Back to sign in</button>
     </form>
 
@@ -548,7 +549,7 @@
       <label class="field">New password<input class="input" type="password" name="password" autocomplete="new-password" minlength="8" required></label>
       <label class="field">Confirm password<input class="input" type="password" name="confirm" autocomplete="new-password" minlength="8" required></label>
       <p class="error" data-error></p>
-      <button class="btn primary" type="submit">Set password and sign in</button>
+      <button class="btn primary" type="submit" data-busy="Signing in…">Set password and sign in</button>
       <button class="linkish" type="button" data-goto="resetRequestForm">Send a new code</button>
     </form>
 
@@ -558,7 +559,7 @@
       <label class="field">Email<input class="input" type="email" name="email" autocomplete="email" required></label>
       <label class="field">Why do you need access?<textarea class="input" name="reason" rows="3" maxlength="300" placeholder="e.g. I'm the plumbing contractor for South Mall"></textarea></label>
       <p class="error" data-error></p>
-      <button class="btn primary" type="submit">Send request</button>
+      <button class="btn primary" type="submit" data-busy="Sending…">Send request</button>
       <button class="linkish" type="button" data-goto="loginForm">Back to sign in</button>
     </form>
 
@@ -929,14 +930,24 @@
     startApp();
   }
 
+  // While a sign-in form is being sent, its button shows a spinner and what's happening (Apps Script can take a few seconds).
   async function submitAuth(form, fn) {
     const btn = $('button[type=submit]', form);
     const err = $('[data-error]', form);
+    const label = btn.textContent;
     err.textContent = '';
     btn.disabled = true;
+    btn.classList.add('busy');
+    btn.setAttribute('aria-busy', 'true');
+    btn.innerHTML = '<span class="spin" aria-hidden="true"></span>' + esc(btn.dataset.busy || 'Please wait…');
     try { await fn(new FormData(form)); }
     catch (e) { err.textContent = e.message; }
-    finally { btn.disabled = false; }
+    finally {
+      btn.disabled = false;
+      btn.classList.remove('busy');
+      btn.removeAttribute('aria-busy');
+      btn.textContent = label;
+    }
   }
 
   $('#loginForm').addEventListener('submit', e => {
