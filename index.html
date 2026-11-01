@@ -168,7 +168,7 @@
   .quick { display: none; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
   .quick-btn { flex: 1; min-height: 40px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); font-weight: 650; font-size: 14px; color: var(--text); cursor: pointer; border-left: 4px solid var(--c); }
   .quick-btn:active { background: var(--surface-2); }
-  .assign-pill { flex: none; height: 26px; padding: 0 10px; border: 1px dashed var(--accent); border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 700; cursor: pointer; }
+  .assign-pill { flex: none; height: 26px; padding: 0 10px; border: 1px dashed var(--accent); border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 16px; cursor: pointer; display: inline-flex; align-items: center; }
   .assign-pill:hover { background: var(--surface); }
   .assignee { flex: none; max-width: 48%; display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px 0 1px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--text); font-size: 12px; font-weight: 650; cursor: pointer; }
   .assignee .avatar { width: 22px; height: 22px; font-size: 9.5px; }
@@ -350,6 +350,7 @@
     --ic-arrow-right: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M5 12h14M12 5l7 7-7 7'/></svg>");
     --ic-arrow-left: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M19 12H5M12 19l-7-7 7-7'/></svg>");
     --ic-more: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='5' r='1'/><circle cx='12' cy='12' r='1'/><circle cx='12' cy='19' r='1'/></svg>");
+    --ic-user-plus: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M8 21v-2a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v2'/><circle cx='15' cy='7' r='4'/><path d='M5 8v6M2 11h6'/></svg>");
     --ic-share: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8M16 6l-4-4-4 4M12 2v13'/></svg>");
   }
   .i { display: inline-block; flex: none; width: 1em; height: 1em; vertical-align: -0.14em; background: currentColor; -webkit-mask: var(--i) center / contain no-repeat; mask: var(--i) center / contain no-repeat; }
@@ -367,6 +368,7 @@
   .i-arrow-left { --i: var(--ic-arrow-left); }
   .i-more { --i: var(--ic-more); }
   .i-share { --i: var(--ic-share); }
+  .i-user-plus { --i: var(--ic-user-plus); }
   .icon-btn .i, .viewer-close .i { width: 20px; height: 20px; vertical-align: middle; }
   .viewer-nav .i { width: 26px; height: 26px; vertical-align: middle; }
   .thumb-remove .i { width: 15px; height: 15px; vertical-align: middle; }
@@ -1266,11 +1268,11 @@
 
   /* ---------------- assigning from the card ---------------- */
 
-  // Unassigned cards show "+ Assign"; assigned cards show who has it. Either opens a short list of people
+  // Unassigned cards show a + person button; assigned cards show who has it. Either opens a short list of people
   // so jobs can be handed out without opening each one.
   function assignControlHtml(t) {
     // On phones, swiping assigns New and In Progress cards, so they don't need the pill.
-    if (!t.assignee) return isMobile() && SWIPE[t.status] ? '' : '<button type="button" class="assign-pill" data-assign-open>+ Assign</button>';
+    if (!t.assignee) return isMobile() && SWIPE[t.status] ? '' : '<button type="button" class="assign-pill" data-assign-open title="Assign" aria-label="Assign">' + icon('user-plus') + '</button>';
     const who = userName(t.assignee);
     const mine = t.assignee === S.board.me.email;
     return '<button type="button" class="assignee" data-assign-open title="Assigned to ' + esc(who) + ' (change)" aria-label="Assigned to ' + esc(who) + '. Change">' +
