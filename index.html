@@ -734,6 +734,8 @@
     selected: new Set(),
     dragId: null,
     openId: null,
+    details: {},   // task id -> the request window as last loaded (activity, files)
+    detailAt: {},  // task id -> when it was loaded
   };
 
   /*
@@ -2440,23 +2442,59 @@
     }
   }
 
+  /*
+   * Request windows open from what this device already has: the card, plus the activity and files from the last time
+   * the request was opened (or prefetched when the pointer rested on its card). The latest copy then replaces it.
+   */
+  const taskRequests = {};
+  function fetchTask(id) {
+    if (!taskRequests[id]) {
+      taskRequests[id] = api('apiGetTask', S.token, id)
+        .then(t => { S.details[id] = t; S.detailAt[id] = Date.now(); return t; })
+        .finally(() => { delete taskRequests[id]; });
+    }
+    return taskRequests[id];
+  }
+
+  /** Quietly loads a request's window in the background, at most once a minute per request. */
+  function prefetchTask(id) {
+    if (!S.token || !id || taskRequests[id] || Date.now() - (S.detailAt[id] || 0) < 60000) return;
+    fetchTask(id).catch(() => {});
+  }
+
   async function openTask(id) {
     S.openId = id;
     markSeen(id);
     const cached = S.board && S.board.tasks.find(t => t.id === id);
+    const known = S.details[id];
     if (cached) {
       renderBoard();
-      renderDetail(Object.assign({ activity: null }, cached));
+      renderDetail(Object.assign({ activity: null }, known || {}, cached,
+        known ? { activity: known.activity, attachments: known.attachments, attachmentCount: known.attachmentCount } : {}));
+    } else if (known) {
+      renderDetail(known);
     } else {
       openModal('<div class="loading"><span class="spin"></span> Loading…</div>');
     }
     try {
-      const t = await api('apiGetTask', S.token, id);
+      const t = await fetchTask(id);
       if (S.openId === id) renderDetail(t);
     } catch (e) {
-      if (S.openId === id) { closeModal(); toast(e.message, true); }
+      if (S.openId === id && !known) { closeModal(); toast(e.message, true); }
     }
   }
+
+  // Desktop: resting the pointer on a card starts loading it. Phones: the touch that opens a card starts it.
+  let hoverTimer = null;
+  $('#board').addEventListener('mouseover', e => {
+    const card = e.target.closest && e.target.closest('.card');
+    clearTimeout(hoverTimer);
+    if (card && !S.dragId) hoverTimer = setTimeout(() => prefetchTask(card.dataset.id), 250);
+  });
+  $('#board').addEventListener('pointerdown', e => {
+    const card = e.pointerType === 'touch' && e.target.closest('.card');
+    if (card) prefetchTask(card.dataset.id);
+  }, { passive: true });
 
   /** Comment text with @mentions of board users highlighted. */
   function commentHtml(text) {
@@ -2557,6 +2595,7 @@
 
   function renderDetail(t) {
     S.detail = t;
+    if (Array.isArray(t.activity) && !t.activity.some(a => a.pending)) { S.details[t.id] = t; S.detailAt[t.id] = S.detailAt[t.id] || Date.now(); }
     const b = S.board;
     const gallery = galleryFor(t);
     const me = b.me.email;
