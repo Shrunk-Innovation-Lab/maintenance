@@ -2514,7 +2514,7 @@
       if (t.activityCount === 0 && !t.attachmentCount) return false; // opens complete without asking
       return !d || d.updated !== t.updated || d.comments !== t.comments || (d.attachmentCount || 0) !== (t.attachmentCount || 0);
     };
-    const ids = Array.from(new Set(onScreen)).filter(stale).sort((a, b) => rank(a) - rank(b)).slice(0, 60);
+    const ids = Array.from(new Set(onScreen)).filter(stale).sort((a, b) => rank(a) - rank(b)).slice(0, 40);
     if (!ids.length) return;
     batchBusy = true;
     try {
@@ -2525,7 +2525,7 @@
         S.detailAt[id] = now;
         if (S.openId === id && S.detail && S.detail.activity == null) renderDetail(found[id]);
       });
-      if (Object.keys(found || {}).length >= 60) prefetchBoard(3000); // more to do: carry on shortly
+      if (Object.keys(found || {}).length >= 40) prefetchBoard(20000); // more to do: carry on, gently
     } catch (e) {
       /* only a speed-up: ignore */
     } finally {
