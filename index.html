@@ -1046,6 +1046,7 @@
     }
     renderFilters();
     renderBoard();
+    prefetchBoard();
   }
 
   // Board refresh used by the 60-second poll and after a conflict.
@@ -1065,6 +1066,7 @@
       renderFilters();
       renderBoard();
       announceChanges(before, data.tasks);
+      prefetchBoard();
     }).catch(() => {});
   }
 
@@ -1520,6 +1522,7 @@
     store.set('mb_tab', S.tab);
     $('#board').scrollTop = 0;
     renderBoard();
+    prefetchBoard(300);
   });
   // Switching between phone and desktop layouts (e.g. rotating a tablet) re-renders so drag-and-drop is set correctly.
   mobileQuery.addEventListener('change', () => { if (S.board) renderBoard(); });
@@ -2467,9 +2470,11 @@
     markSeen(id);
     const cached = S.board && S.board.tasks.find(t => t.id === id);
     const known = S.details[id];
+    // The card says when there's nothing to load: show the empty request window complete straight away.
+    const empty = cached && cached.activityCount === 0 && !cached.attachmentCount ? { activity: [], attachments: [] } : {};
     if (cached) {
       renderBoard();
-      renderDetail(Object.assign({ activity: null }, known || {}, cached,
+      renderDetail(Object.assign({ activity: null }, known || {}, cached, empty,
         known ? { activity: known.activity, attachments: known.attachments, attachmentCount: known.attachmentCount } : {}));
     } else if (known) {
       renderDetail(known);
@@ -2481,6 +2486,50 @@
       if (S.openId === id) renderDetail(t);
     } catch (e) {
       if (S.openId === id && !known) { closeModal(); toast(e.message, true); }
+    }
+  }
+
+  /*
+   * After the board loads or changes, the request windows for the cards on it are fetched in the background, a batch
+   * at a time: your jobs first, then the column you're looking at, then the rest. Only missing or outdated ones are asked for.
+   */
+  let batchTimer = null;
+  let batchBusy = false;
+  function prefetchBoard(delay) {
+    clearTimeout(batchTimer);
+    batchTimer = setTimeout(runPrefetchBatch, delay == null ? 1500 : delay);
+  }
+  async function runPrefetchBatch() {
+    if (!S.token || !S.board || batchBusy || document.hidden || !navigator.onLine) return;
+    const me = S.board.me.email;
+    const active = $('#board .col.active');
+    const onScreen = $$('#board .card').map(c => c.dataset.id);
+    const inActive = new Set(active ? $$('.card', active).map(c => c.dataset.id) : []);
+    const byId = new Map(S.board.tasks.map(t => [t.id, t]));
+    const rank = id => (byId.get(id) && byId.get(id).assignee === me ? 0 : inActive.has(id) ? 1 : 2);
+    const stale = id => {
+      const t = byId.get(id);
+      const d = S.details[id];
+      if (!t || taskRequests[id]) return false;
+      if (t.activityCount === 0 && !t.attachmentCount) return false; // opens complete without asking
+      return !d || d.updated !== t.updated || d.comments !== t.comments || (d.attachmentCount || 0) !== (t.attachmentCount || 0);
+    };
+    const ids = Array.from(new Set(onScreen)).filter(stale).sort((a, b) => rank(a) - rank(b)).slice(0, 60);
+    if (!ids.length) return;
+    batchBusy = true;
+    try {
+      const found = await api('apiGetTasks', S.token, ids);
+      const now = Date.now();
+      Object.keys(found || {}).forEach(id => {
+        S.details[id] = found[id];
+        S.detailAt[id] = now;
+        if (S.openId === id && S.detail && S.detail.activity == null) renderDetail(found[id]);
+      });
+      if (Object.keys(found || {}).length >= 60) prefetchBoard(3000); // more to do: carry on shortly
+    } catch (e) {
+      /* only a speed-up: ignore */
+    } finally {
+      batchBusy = false;
     }
   }
 
