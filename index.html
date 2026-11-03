@@ -700,7 +700,8 @@
   'use strict';
 
   const STATUS_COLORS = { 'New': '#3b82f6', 'In Progress': '#f59e0b', 'On Hold': '#8b5cf6', 'Done': '#10b981' };
-  const POLL_MS = 30000;
+  const POLL_MS = 15000;
+  const LIVE_MS = 4000; // an open request checks for other people's comments and changes this often
   const PAGE = 40; // cards drawn per column before "Show more"
   const ICONS = {
     photo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="12" cy="12" r="3.2"/></svg>',
@@ -2496,6 +2497,33 @@
     renderBoard();
   }
 
+  /*
+   * Live comments: while a request is open, ask every few seconds whether it has changed. An unchanged request costs
+   * one cache read on the server; a changed one comes back in full and is redrawn (keeping anything you're typing).
+   */
+  let liveBusy = false;
+  function liveTick() {
+    const id = S.openId;
+    if (!id || !S.token || document.hidden || !navigator.onLine || liveBusy || taskRequests[id] || pending.has(id)) return;
+    const shown = S.detail && S.detail.id === id ? S.detail : null;
+    if (!shown || !shown.v || !Array.isArray(shown.activity) || shown.activity.some(a => a.pending)) return;
+    liveBusy = true;
+    api('apiGetTask', S.token, id, shown.v).then(res => {
+      if (!res || res.unchanged || S.openId !== id) return;
+      const now = S.detail;
+      if (!now || now.id !== id || (now.activity || []).some(a => a.pending)) return; // your own comment is mid-send
+      const before = new Set((now.activity || []).map(a => a.at + '|' + a.email + '|' + a.type + '|' + a.detail));
+      const fresh = (res.activity || []).filter(a => !before.has(a.at + '|' + a.email + '|' + a.type + '|' + a.detail) && a.email !== S.board.me.email);
+      S.details[id] = res;
+      S.detailAt[id] = Date.now();
+      upsertTask(res);
+      renderDetail(res);
+      const said = fresh.filter(a => a.type === 'comment').pop();
+      if (said) toast((said.name || said.email) + ': ' + (said.detail.length > 80 ? said.detail.slice(0, 79) + '…' : said.detail), 'info', null, 6000);
+    }).catch(() => {}).finally(() => { liveBusy = false; });
+  }
+  setInterval(liveTick, LIVE_MS);
+
   /** Quietly loads a request's window in the background, at most once a minute per request. */
   function prefetchTask(id) {
     if (!S.token || !id || taskRequests[id] || Date.now() - (S.detailAt[id] || 0) < 60000) return;
@@ -2680,6 +2708,13 @@
   }
 
   function renderDetail(t) {
+    // Redrawing the same request (e.g. someone else commented) keeps your typing, cursor and scroll position.
+    const same = S.renderedId === t.id && !$('#modal').classList.contains('hidden');
+    const active = document.activeElement;
+    const keep = same && active && active.id && $('#modalCard').contains(active)
+      ? { id: active.id, start: active.selectionStart, end: active.selectionEnd } : null;
+    const scroll = same ? $('#modal').scrollTop : 0;
+    S.renderedId = t.id;
     S.detail = t;
     if (Array.isArray(t.activity) && !t.activity.some(a => a.pending)) { S.details[t.id] = t; S.detailAt[t.id] = S.detailAt[t.id] || Date.now(); }
     const b = S.board;
@@ -2744,6 +2779,14 @@
     );
 
     $('#commentText').value = draft;
+    $('#modal').scrollTop = scroll;
+    if (keep) {
+      const el = document.getElementById(keep.id);
+      if (el) {
+        el.focus({ preventScroll: true });
+        try { el.setSelectionRange(keep.start, keep.end); } catch (e) { /* not a text field */ }
+      }
+    }
     $$('#modalCard .thumb').forEach(btn => {
       const i = Number(btn.dataset.photo);
       btn.addEventListener('click', () => openViewer(gallery, i));
