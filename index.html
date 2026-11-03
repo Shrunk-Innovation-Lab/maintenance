@@ -127,7 +127,7 @@
   body.drag-blocked, body.drag-blocked * { cursor: not-allowed !important; }
   .col.drop-blocked { border-color: var(--border-strong); border-style: dashed; background: repeating-linear-gradient(135deg, transparent 0 10px, rgba(100,107,117,.07) 10px 20px); }
   .drag-ghost.blocked { opacity: .85; }
-  .drag-ghost.blocked::after { content: "Assign first"; position: absolute; top: -10px; right: 10px; padding: 2px 9px; border-radius: 999px; background: var(--danger); color: #fff; font-size: 11.5px; font-weight: 700; box-shadow: var(--shadow); }
+  .drag-ghost.blocked::after { content: "Can't move here"; position: absolute; top: -10px; right: 10px; padding: 2px 9px; border-radius: 999px; background: var(--danger); color: #fff; font-size: 11.5px; font-weight: 700; box-shadow: var(--shadow); }
   @media (prefers-reduced-motion: reduce) { .drag-ghost { animation: none; transform: rotate(1.5deg) scale(1.03); } }
   .cards { padding: 8px 10px 12px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; min-height: 80px; }
   .empty { color: var(--faint); text-align: center; font-size: 13px; padding: 18px 0; margin: 0; }
@@ -1339,13 +1339,56 @@
     });
   }
 
+  /** Puts a job into an extra column (e.g. Roof Leaks), or takes it out (lane ''). Saved after the Undo window. */
+  function setLane(id, lane) {
+    const t = findTask(id);
+    if (!t || (t.lane || '') === lane) return;
+    flushOps(id);
+    const before = t.lane || '';
+    const expected = version(t);
+    t.lane = lane;
+    renderBoard();
+    refreshOpenDetail(id, { lane: lane });
+    withUndo(id, id, lane ? 'Added to ' + lane : 'Taken out of ' + before, lane ? undefined : 'info', async () => {
+      const updated = await api('apiUpdateTask', S.token, id, { lane: lane || '-' }, expected);
+      upsertTask(updated);
+      if (S.openId === id) renderDetail(updated);
+    }, () => {
+      const x = findTask(id);
+      if (x) x.lane = before;
+      renderBoard();
+      refreshOpenDetail(id, { lane: before });
+    });
+  }
+
+  function laneFieldHtml(t) {
+    const lanes = S.board.lanes || [];
+    if (!lanes.length) return '';
+    return '<div class="field"><span class="field-label">Board column' +
+      infoTip('Roof leaks are picked up from the maintenance type or description. Change it here if one was missed or picked up by mistake. Finished jobs always go to Done.') + '</span>' +
+      '<select id="dLane" class="input" aria-label="Board column"><option value="">By status</option>' +
+      lanes.map(n => '<option' + (n === t.lane ? ' selected' : '') + '>' + esc(n) + '</option>').join('') + '</select></div>';
+  }
+
+  /** Why a dragged card can't be dropped on this column ('' when it can). */
+  function dropReason(t, col) {
+    const current = columnOf(t);
+    if (col.dataset.col === current) return '';
+    if (col.dataset.lane) return t.status === S.board.doneStatus ? 'Reopen this job before adding it to ' + col.dataset.lane + '.' : '';
+    if (inLane(t) && col.dataset.status !== S.board.doneStatus) {
+      return 'Jobs in ' + t.lane + ' stay there until Done. Change the status in the request window, or take it out of ' + t.lane + ' there.';
+    }
+    return moveBlockReason(t, col.dataset.status);
+  }
+
   function cardHtml(t) {
     const who = userName(t.assignee);
     const late = overdueDays(t);
     const unread = isUnread(t);
     const html = '<article class="card' + (late ? ' is-overdue' : '') + (S.selected.has(t.id) ? ' selected' : '') + '" tabindex="0" data-id="' + esc(t.id) + '"' +
       (t.thumbKey ? ' data-thumb="' + esc(t.thumbKey) + '"' : '') + ' style="--c:' + statusColor(t.status) + '">' +
-      '<div class="card-top"><span class="chip" style="--h:' + hue(t.type) + '">' + esc(t.type || 'Other') + '</span>' + priorityBadge(t) +
+      '<div class="card-top"><span class="chip" style="--h:' + hue(t.type) + '">' + esc(t.type || 'Other') + '</span>' +
+        (inLane(t) ? '<span class="status-pill" style="--c:' + statusColor(t.status) + '">' + esc(t.status) + '</span>' : '') + priorityBadge(t) +
         (late ? '<span class="prio prio-urgent" title="No update for ' + late + ' days">Overdue ' + late + 'd</span>' : '') +
         '<time class="age" datetime="' + esc(t.date) + '" title="' + esc(ago(t.date)) + '">' + esc(cardDate(t.date)) + '</time></div>' +
       '<div class="card-body"><div class="card-text">' +
@@ -1402,43 +1445,65 @@
   const mobileQuery = window.matchMedia('(max-width: 720px)');
   function isMobile() { return mobileQuery.matches; }
 
+  const LANE_COLOR = '#0891b2';
+
+  /** Columns left to right: the first status (New), then extra columns such as Roof Leaks, then the other statuses. */
+  function boardColumns() {
+    const b = S.board;
+    const sts = b.statuses.map(s => ({ key: s, label: s, status: s, color: statusColor(s) }));
+    const lanes = (b.lanes || []).map(n => ({ key: 'lane:' + n, label: n, lane: n, color: LANE_COLOR }));
+    return sts.slice(0, 1).concat(lanes, sts.slice(1));
+  }
+
+  /** The column a card sits in: open jobs in an extra column go there; everything else goes by status. */
+  function columnOf(t) {
+    return t.lane && t.status !== S.board.doneStatus && (S.board.lanes || []).indexOf(t.lane) >= 0 ? 'lane:' + t.lane : t.status;
+  }
+  function inLane(t) { return columnOf(t) !== t.status; }
+
   function renderBoard() {
     const b = S.board;
     const tasks = filteredTasks();
-    if (b.statuses.indexOf(S.tab) < 0) S.tab = b.statuses[0];
+    const cols = boardColumns();
+    if (!cols.some(c => c.key === S.tab)) S.tab = cols[0].key;
     const lists = {};
+    cols.forEach(c => { lists[c.key] = []; });
+    tasks.forEach(t => (lists[columnOf(t)] || lists[t.status]).push(t));
     // Newest first.
-    b.statuses.forEach(st => { lists[st] = tasks.filter(t => t.status === st).sort((x, y) => sortKey(y) - sortKey(x)); });
+    cols.forEach(c => lists[c.key].sort((x, y) => sortKey(y) - sortKey(x)));
     updateFilterUi();
 
     const board = $('#board');
     const boardScroll = board.scrollTop;
     const scroll = {};
-    $$('.col').forEach(c => { scroll[c.dataset.status] = $('.cards', c).scrollTop; });
+    $$('.col').forEach(c => { scroll[c.dataset.col] = $('.cards', c).scrollTop; });
 
-    board.style.setProperty('--cols', b.statuses.length);
-    $('#statusTabs').style.setProperty('--cols', b.statuses.length);
-    $('#statusTabs').innerHTML = b.statuses.map(st =>
-      '<button type="button" class="status-tab' + (st === S.tab ? ' active' : '') + '" data-tab="' + esc(st) + '" style="--c:' + statusColor(st) + '" aria-pressed="' + (st === S.tab) + '">' +
-      '<span class="n">' + lists[st].length + '</span><span class="label">' + esc(st) + '</span></button>').join('');
+    board.style.setProperty('--cols', cols.length);
+    $('#statusTabs').style.setProperty('--cols', cols.length);
+    $('#statusTabs').innerHTML = cols.map(c =>
+      '<button type="button" class="status-tab' + (c.key === S.tab ? ' active' : '') + '" data-tab="' + esc(c.key) + '" style="--c:' + c.color + '" aria-pressed="' + (c.key === S.tab) + '">' +
+      '<span class="n">' + lists[c.key].length + '</span><span class="label">' + esc(c.label) + '</span></button>').join('');
 
-    board.innerHTML = b.statuses.map(st => {
-      const list = lists[st];
+    board.innerHTML = cols.map(c => {
+      const list = lists[c.key];
       // Only the first PAGE cards of each column are drawn; "Show more" adds the next lot.
-      const limit = S.limits[st] || PAGE;
+      const limit = S.limits[c.key] || PAGE;
       const more = list.length - limit;
-      return '<section class="col' + (st === S.tab ? ' active' : '') + '" data-status="' + esc(st) + '">' +
-        '<header class="col-head"><span class="dot" style="--c:' + statusColor(st) + '"></span><h2>' + esc(st) + '</h2>' +
-          (st === b.doneStatus ? infoTip('Jobs moved to Done in the last ' + b.doneVisibleDays + ' days. Older ones are in Search all requests.') : '') +
+      const isDone = c.status === b.doneStatus;
+      return '<section class="col' + (c.key === S.tab ? ' active' : '') + '" data-col="' + esc(c.key) + '" data-status="' + esc(c.status || '') + '" data-lane="' + esc(c.lane || '') + '">' +
+        '<header class="col-head"><span class="dot" style="--c:' + c.color + '"></span><h2>' + esc(c.label) + '</h2>' +
+          (isDone ? infoTip('Jobs moved to Done in the last ' + b.doneVisibleDays + ' days. Older ones are in Search all requests.') : '') +
+          (c.lane ? infoTip('Open ' + c.label.toLowerCase() + ', whatever their status. Each card shows its status; it moves to Done when finished.') : '') +
           '<span class="count">' + list.length + '</span></header>' +
-        (st === b.doneStatus ? '<p class="col-note phone-only">Moved here in the last ' + b.doneVisibleDays + ' days</p>' : '') +
-        (SWIPE[st] && !store.get('mb_swiped') ? '<p class="col-note swipe-hint">' + esc(SWIPE[st].tip) + '</p>' : '') +
+        (isDone ? '<p class="col-note phone-only">Moved here in the last ' + b.doneVisibleDays + ' days</p>' : '') +
+        (c.lane ? '<p class="col-note phone-only">Open ' + esc(c.label.toLowerCase()) + ', whatever their status</p>' : '') +
+        (c.status && SWIPE[c.status] && !store.get('mb_swiped') ? '<p class="col-note swipe-hint">' + esc(SWIPE[c.status].tip) + '</p>' : '') +
         '<div class="cards">' + (list.length ? list.slice(0, limit).map(cardHtml).join('') : '<p class="empty">Nothing here</p>') +
-        (more > 0 ? '<button type="button" class="more-btn" data-more="' + esc(st) + '">Show ' + Math.min(PAGE, more) + ' more <span class="muted">(' + more + ' not shown)</span></button>' : '') +
+        (more > 0 ? '<button type="button" class="more-btn" data-more="' + esc(c.key) + '">Show ' + Math.min(PAGE, more) + ' more <span class="muted">(' + more + ' not shown)</span></button>' : '') +
         '</div></section>';
     }).join('');
     board.scrollTop = boardScroll;
-    $$('.col').forEach(c => { if (scroll[c.dataset.status]) $('.cards', c).scrollTop = scroll[c.dataset.status]; });
+    $$('.col').forEach(c => { if (scroll[c.dataset.col]) $('.cards', c).scrollTop = scroll[c.dataset.col]; });
     showThumbs();
     fetchThumbs();
   }
@@ -1534,16 +1599,18 @@
       ? { left: dropPoint.x - (dropPoint.offX != null ? dropPoint.offX : rect.width / 2), top: dropPoint.y - (dropPoint.offY != null ? dropPoint.offY : 24) }
       : rect;
     flushOps(id); // an earlier change to this card goes first
+    const fromCol = columnOf(t);
     t.status = status;
+    const toCol = columnOf(t); // a Roof Leaks job stays in its column until Done
     refreshOpenDetail(id, { status: status });
-    if (isMobile()) {
+    if (isMobile() && fromCol !== toCol) {
       // On phones the new column is another tab, so the card slides away and that tab's count pulses.
       await slideOut(el, opts && opts.swiped);
       renderBoard();
-      pulseTab(status);
+      pulseTab(toCol);
     } else {
       renderBoard();
-      glideIn(id, from);
+      glideIn(id, fromCol !== toCol ? from : null);
     }
     withUndo(id, id, 'Moved to ' + status, undefined, async () => {
       const updated = await api('apiMoveTask', S.token, id, status, expected);
@@ -1968,11 +2035,11 @@
     const under = document.elementFromPoint(e.clientX, e.clientY);
     const col = under && under.closest('#board .col');
     const t = S.board.tasks.find(x => x.id === drag.id);
-    const reason = col && t ? moveBlockReason(t, col.dataset.status) : '';
+    const reason = col && t ? dropReason(t, col) : '';
     const blocked = Boolean(reason);
     drag.reason = reason;
     $$('.col.drop, .col.drop-blocked').forEach(c => { if (c !== col) c.classList.remove('drop', 'drop-blocked'); });
-    if (col && col.dataset.status !== statusOf(drag.id)) col.classList.add(blocked ? 'drop-blocked' : 'drop');
+    if (col && t && col.dataset.col !== columnOf(t)) col.classList.add(blocked ? 'drop-blocked' : 'drop');
     drag.ghost.classList.toggle('blocked', blocked);
     document.body.classList.toggle('drag-blocked', blocked);
     drag.col = col;
@@ -2001,8 +2068,10 @@
     }
     d.ghost.remove();
     d.card.classList.remove('dragging');
-    if (dropped && d.col && d.col.dataset.status !== statusOf(d.id)) {
-      moveTask(d.id, d.col.dataset.status, { x: e.clientX, y: e.clientY, offX: d.offX, offY: d.offY });
+    const t = findTask(d.id);
+    if (dropped && d.col && t && d.col.dataset.col !== columnOf(t)) {
+      if (d.col.dataset.lane) setLane(d.id, d.col.dataset.lane);
+      else moveTask(d.id, d.col.dataset.status, { x: e.clientX, y: e.clientY, offX: d.offX, offY: d.offY });
     } else {
       wiggle(d.card); // dropped back where it was
     }
@@ -2471,7 +2540,8 @@
   function activityHtml(a) {
     const name = a.name || a.email;
     const av = '<span class="avatar" style="--h:' + hue(a.email) + '">' + esc(initials(name)) + '</span>';
-    const when = '<span class="when" title="' + esc(fullDate(a.at)) + '">' + esc(ago(a.at)) + '</span>';
+    const when = a.pending ? '<span class="when">Sending…</span>'
+      : '<span class="when" title="' + esc(fullDate(a.at)) + '">' + esc(ago(a.at)) + '</span>';
     if (a.type === 'comment') {
       return '<li>' + av + '<div class="body"><span class="who">' + esc(name) + '</span>' + when + '<div class="bubble">' + commentHtml(a.detail) + '</div></div></li>';
     }
@@ -2519,6 +2589,7 @@
           '<select id="dStatus" class="input" aria-label="Status">' + statusOpts + '</select></div>' +
         '<label class="field">Priority<select id="dPriority" class="input">' + priorityOpts + '</select></label>' +
         '<label class="field">Assigned to<select id="dAssignee" class="input">' + userOpts + '</select></label>' +
+        laneFieldHtml(t) +
       '</div>' +
       '<section class="m-section"><h4>Description</h4><p class="pre">' + esc(t.description || '—') + '</p>' +
 
@@ -2584,6 +2655,7 @@
     $$('#modalCard [data-remove]').forEach(btn => btn.addEventListener('click', () => removeAttachment(btn.dataset.remove, btn.dataset.name, btn)));
     $('#dStatus').addEventListener('change', e => moveTask(t.id, e.target.value));
     $('#dAssignee').addEventListener('change', e => assignTask(t.id, e.target.value));
+    if ($('#dLane')) $('#dLane').addEventListener('change', e => setLane(t.id, e.target.value));
     // The eye flips straight away; the change is saved in the background and flipped back if that fails.
     $('#dWatch').addEventListener('click', async e => {
       const btn = e.currentTarget;
@@ -2604,18 +2676,30 @@
       e.preventDefault();
       const text = $('#commentText').value.trim();
       if (!text) return;
-      const btn = $('button[type=submit]', e.target);
-      btn.disabled = true;
+      const mentioned = mentionsIn(text);
+      const before = S.detail;
+      const me = S.board.me;
+      // Show the comment straight away; the server catches up in the background.
+      $('#commentText').value = '';
+      const card = findTask(t.id);
+      if (card) { card.comments = (card.comments || 0) + 1; renderBoard(); }
+      renderDetail(Object.assign({}, before, {
+        activity: (before.activity || []).concat([{ at: new Date().toISOString(), email: me.email, name: me.name, type: 'comment', detail: text, pending: true }]),
+        comments: (before.comments || 0) + 1,
+      }));
       try {
-        const mentioned = mentionsIn(text);
         const updated = await api('apiAddComment', S.token, t.id, text, mentioned);
-        $('#commentText').value = '';
         upsertTask(updated);
         if (S.openId === t.id) renderDetail(updated);
         toast(mentioned.length ? 'Comment posted. ' + mentioned.map(userName).join(', ') + (mentioned.length === 1 ? ' has' : ' have') + ' been notified.' : 'Comment posted');
       } catch (err) {
+        if (card) { card.comments = Math.max(0, (card.comments || 1) - 1); renderBoard(); }
+        if (S.openId === t.id) {
+          renderDetail(before);
+          const box = $('#commentText');
+          box.value = text + (box.value ? '\n' + box.value : '');
+        }
         toast(err.message, true);
-        btn.disabled = false;
       }
     });
   }
