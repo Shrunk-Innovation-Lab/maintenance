@@ -44,6 +44,10 @@
   .input, select.input, textarea.input { width: 100%; padding: 9px 11px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); font-weight: 400; color: var(--text); }
   .input:focus, .btn:focus-visible, .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   textarea.input { resize: vertical; min-height: 80px; }
+  /* Dropdowns draw their own chevron, inside the field, the same on every browser. */
+  select.input { -webkit-appearance: none; appearance: none; padding-right: 36px; text-overflow: ellipsis;
+    background: var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23646b75' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 12px center / 16px 16px; }
+  select.input::-ms-expand { display: none; }
   .muted { color: var(--muted); }
   .error { color: var(--danger); font-size: 13px; min-height: 1.2em; margin: 0; }
 
@@ -408,6 +412,7 @@
   .user-actions { display: flex; gap: 8px; margin: 10px 0 0 42px; }
   .user-controls { display: grid; grid-template-columns: 1fr 1fr 1.4fr auto; gap: 10px; align-items: end; margin-top: 10px; }
   .user-controls .input { padding: 6px 8px; }
+  .user-controls select.input { padding-right: 30px; background-position: right 8px center; }
   .user-last { margin: 6px 0 0; font-size: 12px; }
   #meAvatar.has-alert { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px #f59e0b; }
   .tour { position: fixed; left: 50%; bottom: 60px; transform: translateX(-50%); z-index: 44; width: min(380px, calc(100% - 24px)); padding: 16px 16px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-lg); }
@@ -437,7 +442,7 @@
   .card:not(.drag-ghost) { position: relative; }
   .bulk-bar { position: fixed; left: 50%; bottom: 52px; transform: translateX(-50%); z-index: 21; display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 16px; max-width: calc(100% - 24px); background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-lg); }
   .bulk-bar b { white-space: nowrap; font-size: 13.5px; margin-right: 4px; }
-  .bulk-bar select.input { width: auto; max-width: 160px; padding: 6px 8px; font-size: 13px; }
+  .bulk-bar select.input { width: auto; max-width: 160px; padding: 6px 30px 6px 8px; font-size: 13px; background-position: right 8px center; background-size: 14px 14px; }
   .toast.info::before { --ic-check: var(--ic-info); }
   .loading { padding: 40px; color: var(--muted); }
   .spin { width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; display: inline-block; }
