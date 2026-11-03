@@ -1822,9 +1822,7 @@
     $('#finishDone').textContent = 'Saving…';
     try {
       if (text) {
-        const updated = await api('apiAddComment', S.token, f.id, text, mentionsIn(text));
-        upsertTask(updated);
-        if (S.openId === f.id) renderDetail(updated);
+        applyComment(f.id, await api('apiAddComment', S.token, f.id, text, mentionsIn(text)), text, true);
       }
       const added = f.files.length ? await uploadFiles(f.id, f.files.map(x => x.file)) : 0;
       if (!text && !added) throw new Error('The photo couldn\'t be added, so the job is still open. Try again.');
@@ -2464,6 +2462,40 @@
     return taskRequests[id];
   }
 
+  /**
+   * Puts a saved comment into the card and the request window. The server replies with just what changed
+   * (older servers send the whole request, which is used as before).
+   */
+  function applyComment(id, res, text, bumpCard) {
+    if (res && Array.isArray(res.activity)) {
+      upsertTask(res);
+      if (S.openId === id) renderDetail(res);
+      return;
+    }
+    const card = findTask(id);
+    if (card) {
+      Object.assign(card, { updated: res.updated, updatedBy: res.updatedBy, watchers: res.watchers });
+      if (bumpCard) card.comments = (card.comments || 0) + 1;
+      card.activityCount = (card.activityCount || 0) + 1;
+      if (card.assignee === S.board.me.email) card.finishReady = true;
+    }
+    const base = S.openId === id && S.detail ? S.detail : S.details[id];
+    if (base && Array.isArray(base.activity)) {
+      const acts = base.activity.filter(a => !(a.pending && a.detail === text)).concat([res.entry]);
+      const next = Object.assign({}, base, {
+        updated: res.updated, updatedBy: res.updatedBy, watchers: res.watchers, activity: acts,
+        comments: acts.filter(a => a.type === 'comment').length,
+        finishReady: base.finishReady || base.assignee === res.entry.email,
+      });
+      S.details[id] = next;
+      S.detailAt[id] = Date.now();
+      if (S.openId === id) renderDetail(next);
+    } else if (S.openId === id) {
+      fetchTask(id).then(t => { if (S.openId === id) renderDetail(t); }).catch(() => {});
+    }
+    renderBoard();
+  }
+
   /** Quietly loads a request's window in the background, at most once a minute per request. */
   function prefetchTask(id) {
     if (!S.token || !id || taskRequests[id] || Date.now() - (S.detailAt[id] || 0) < 60000) return;
@@ -2781,9 +2813,7 @@
         comments: (before.comments || 0) + 1,
       }));
       try {
-        const updated = await api('apiAddComment', S.token, t.id, text, mentioned);
-        upsertTask(updated);
-        if (S.openId === t.id) renderDetail(updated);
+        applyComment(t.id, await api('apiAddComment', S.token, t.id, text, mentioned), text, false);
         toast(mentioned.length ? 'Comment posted. ' + mentioned.map(userName).join(', ') + (mentioned.length === 1 ? ' has' : ' have') + ' been notified.' : 'Comment posted');
       } catch (err) {
         if (card) { card.comments = Math.max(0, (card.comments || 1) - 1); renderBoard(); }
